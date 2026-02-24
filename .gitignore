@@ -1,0 +1,6 @@
+.DS_Store
+.idea/
+project_data/
+old/
+*.pdf
+__pycache__/
