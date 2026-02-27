@@ -126,23 +126,6 @@ SEQUENCE_LENGTH = 40
 BATCH_SIZE = 128
 
 
-# docs_recipes = load_recipes_csv("project_data/original_files/recipes.csv")
-# docs_food_parquet = load_food_parquet("project_data/original_files/food_recipes.parquet")
-# docs_conversions = load_cooking_conversions("project_data/original_files/cooking_conversions.txt")
-#
-# chars_recipes = sorted(set("".join(docs_recipes)))
-# chars_food_parquet = sorted(set("".join(docs_food_parquet)))
-# chars_conversions = sorted(set("".join(docs_conversions)))
-#
-# char_to_idx_recipes = {char: idx for idx, char in enumerate(chars_recipes)}
-# char_to_idx_food_parquet = {char: idx for idx, char in enumerate(chars_food_parquet)}
-# char_to_idx_conversions = {char: idx for idx, char in enumerate(chars_conversions)}
-#
-# idx_to_char_recipes = {idx: char for char, idx in char_to_idx_recipes.items()}
-# idx_to_char_food_parquet = {idx: char for char, idx in char_to_idx_food_parquet.items()}
-# idx_to_char_conversions = {idx: char for char, idx in char_to_idx_conversions.items()}
-
-
 def build_vocab_from_docs(docs, max_chars=None):
     text = "".join(docs)
     if max_chars is not None:
@@ -171,6 +154,9 @@ def make_char_sequences(text, seq_len, char_to_idx):
 
 
 
+# REFERENCES:
+# https://www.tensorflow.org/api_docs/python/tf/keras/layers/Embedding
+# https://www.tensorflow.org/text/tutorials/text_classification_rnn
 def train_model(text, chars, char_to_idx, seq_len, epochs, lstm_units_list, embed_dim):
     X, y = make_char_sequences(text, seq_len, char_to_idx)
     vocab_size = len(chars)
@@ -185,7 +171,6 @@ def train_model(text, chars, char_to_idx, seq_len, epochs, lstm_units_list, embe
             LSTM(units, return_sequences=not last_layer)
         )
 
-    # model.add(LSTM(lstm_units, input_shape=(seq_len, 1)))
     model.add(Dense(len(chars), activation='softmax'))
 
     model.compile(optimizer='adam', loss='categorical_crossentropy')
