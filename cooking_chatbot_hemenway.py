@@ -1,13 +1,15 @@
+# from google.colab import drive
+# drive.mount('/content/drive')
+
 import csv
 import time
+import textwrap
 
 import numpy as np
 import pandas as pd
-import tensorflow as tf
-from nltk.lm import Vocabulary
 
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, LSTM
+from tensorflow.keras.layers import Dense, LSTM, Embedding
 from tensorflow.keras.utils import to_categorical
 
 
@@ -90,6 +92,7 @@ def load_cooking_conversions(txt_path, max_rows=None):
 
     return [d.lower() for d in docs]
 
+
 # ------- 2. Experiment with different architecture structures (at least 3 different architectures) -------
 ARCHITECTURES = {
     "Arch1_64": {"embed_dim":32, "lstm_units": [64]},
@@ -102,17 +105,26 @@ EPOCHS_LIST = [3, 10, 20]
 
 
 # ------- 5. Experiment with documents of varying sizes -------
+
+# ------- LOCAL -------
+# DATASETS = [
+#     ("recipes_csv", "project_data/original_files/recipes.csv", load_recipes_csv),
+#     ("food_recipes_parquet", "project_data/original_files/food_recipes.parquet", load_food_parquet),
+#     ("cooking_conversions", "project_data/original_files/cooking_conversions.txt", load_cooking_conversions),
+# ]
+
+# ------- GOOGLE COLAB -------
 DATASETS = [
-    ("recipes_csv", "project_data/original_files/recipes.csv", load_recipes_csv),
-    ("food_recipes_parquet", "project_data/original_files/food_recipes.parquet", load_food_parquet),
-    ("cooking_conversions", "project_data/original_files/cooking_conversions.txt", load_cooking_conversions),
+    ("recipes_csv", "/content/drive/MyDrive/Colab_Notebooks/data/recipes.csv", load_recipes_csv),
+    ("food_recipes_parquet", "/content/drive/MyDrive/Colab_Notebooks/data/food_recipes.parquet", load_food_parquet),
+    ("cooking_conversions", "/content/drive/MyDrive/Colab_Notebooks/data/cooking_conversions.txt", load_cooking_conversions),
 ]
 
 CORPUS_SIZES = [200, 2000]
 
-SEQUENCE_LENGTH = 10
-MAX_VOCAB = 5000
+SEQUENCE_LENGTH = 40
 BATCH_SIZE = 128
+
 
 # docs_recipes = load_recipes_csv("project_data/original_files/recipes.csv")
 # docs_food_parquet = load_food_parquet("project_data/original_files/food_recipes.parquet")
@@ -140,6 +152,9 @@ def build_vocab_from_docs(docs, max_chars=None):
     idx_to_char = {i: c for c, i in char_to_idx.items()}
     return text, chars, char_to_idx, idx_to_char
 
+
+
+
 def make_char_sequences(text, seq_len, char_to_idx):
     X = []
     y = []
@@ -149,29 +164,39 @@ def make_char_sequences(text, seq_len, char_to_idx):
         X.append([char_to_idx[c] for c in seq])
         y.append(char_to_idx[nxt])
 
-    X = np.array(X).reshape((-1, seq_len, 1))
+    X = np.array(X, dtype=np.int32)
     y = to_categorical(y, num_classes=len(char_to_idx))
     return X, y
 
 
 
-def train_model(text, chars, char_to_idx, seq_len, epochs, lstm_units_list):
+
+def train_model(text, chars, char_to_idx, seq_len, epochs, lstm_units_list, embed_dim):
     X, y = make_char_sequences(text, seq_len, char_to_idx)
+    vocab_size = len(chars)
 
     model = Sequential()
+
+    model.add(Embedding(input_dim=vocab_size, output_dim = embed_dim, input_length = seq_len))
 
     for layer_i, units in enumerate(lstm_units_list):
         last_layer = (layer_i == len(lstm_units_list) - 1)
         model.add(
-            LSTM(units, input_shape=(seq_len, 1) if layer_i == 0 else None, return_sequences=not last_layer)
+            LSTM(units, return_sequences=not last_layer)
         )
 
     # model.add(LSTM(lstm_units, input_shape=(seq_len, 1)))
     model.add(Dense(len(chars), activation='softmax'))
 
     model.compile(optimizer='adam', loss='categorical_crossentropy')
+    t0 = time.time()
     model.fit(X, y, epochs=epochs, batch_size=BATCH_SIZE, verbose=1)
-    return model
+    train_seconds = time.time() - t0
+
+    return model, train_seconds
+
+
+
 
 # ------- 4. Generate a new text that mimics the style of your chatbot document -------
 def generate_text(model, start_string, num_generate, seq_len, char_to_idx, idx_to_char):
@@ -183,7 +208,7 @@ def generate_text(model, start_string, num_generate, seq_len, char_to_idx, idx_t
     else:
         start_string = start_string[-seq_len:]
 
-    input_eval = np.array([char_to_idx[c] for c in start_string]).reshape((1, seq_len, 1))
+    input_eval = np.array([char_to_idx[c] for c in start_string], dtype=np.int32).reshape((1, seq_len))
 
     text_generated = []
     for i in range(num_generate):
@@ -191,9 +216,10 @@ def generate_text(model, start_string, num_generate, seq_len, char_to_idx, idx_t
         predicted_id = int(np.argmax(predictions[0]))
 
         text_generated.append(idx_to_char[predicted_id])
-        input_eval = np.concatenate([input_eval[:, 1:, :], [[[predicted_id]]]], axis=1)
+        input_eval = np.concatenate([input_eval[:, 1:], np.array([[predicted_id]], dtype=np.int32)], axis=1)
 
     return start_string + ''.join(text_generated)
+
 
 
 
@@ -215,27 +241,30 @@ def main():
             print("preview:\n", "\n".join(docs[:3])[:800], "\n", flush=True)
             print("---------------\n")
 
-            for architecture in ARCHITECTURES:
+            for architecture, cfg in ARCHITECTURES.items():
                 for epochs in EPOCHS_LIST:
                     print("architecture: ", architecture, flush=True)
                     print("epochs: ", epochs, flush=True)
-                    model = train_model(
+                    model, train_seconds = train_model(
                         text = text,
                         chars = chars,
                         char_to_idx = char_to_idx,
                         seq_len = SEQUENCE_LENGTH,
                         epochs = epochs,
-                        lstm_units_list = cfg["lstm_units"]
+                        lstm_units_list = cfg["lstm_units"],
+                        embed_dim = cfg["embed_dim"],
                     )
                     sample = generate_text(
                         model = model,
                         start_string = start_string,
-                        num_generate = 50,
+                        num_generate = 400,
                         seq_len = SEQUENCE_LENGTH,
                         char_to_idx = char_to_idx,
                         idx_to_char = idx_to_char
                     )
-                    print("Sample: \n", sample, "\n", flush=True)
+                    wrapped_sample = textwrap.fill(sample, width=80)
+                    print("Sample: \n", wrapped_sample, "\n", flush=True)
+
 
 
 
