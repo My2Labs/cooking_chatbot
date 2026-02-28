@@ -1,0 +1,413 @@
+# from google.colab import drive
+# drive.mount('/content/drive')
+
+import csv
+import time
+import textwrap
+
+import re
+import numpy as np
+import pandas as pd
+import spacy
+
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, LSTM, Embedding
+from tensorflow.keras.utils import to_categorical
+from nltk import word_tokenize, pos_tag
+
+
+#------- M3.F1 - 1. Load a large corpus of text data -------
+def load_recipes_csv(csv_path, max_rows=200):
+    parts = []
+    with open(csv_path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for i, row in enumerate(reader):
+            if max_rows is not None and i >= max_rows:
+                break
+
+            name = row.get("Name", "")
+            desc = row.get("Description", "")
+            category = row.get("RecipeCategory", "")
+            keywords = row.get("Keywords", "")
+            ingredients = row.get("RecipeIngredientParts", "")
+            instructions = row.get("RecipeInstructions", "")
+
+            keywords = keywords.replace('c("', "").replace('")', "").replace('", "', " ")
+
+            parts.append(
+                f"recipe: {name}\n"
+                f"description: {desc}\n"
+                f"category: {category}\n"
+                f"keywords: {keywords}\n"
+                f"ingredients: {ingredients}\n"
+                f"instructions: {instructions}\n"
+            )
+
+    return [p.lower() for p in parts]
+
+
+
+
+#------- M3.F1 - 1. Load a large corpus of text data -------
+def load_food_parquet(parquet_path, max_rows=200):
+    df = pd.read_parquet(parquet_path)
+
+    if max_rows is not None:
+        df = df.head(max_rows)
+
+    def col(name):
+        if name in df.columns:
+            return df[name].fillna("").astype(str)
+        return pd.Series([""] * len(df), index=df.index)
+
+    names = col("name")
+    desc = col("description")
+    tags = col("tags")
+    ingredients = col("ingredients")
+    steps = col("steps")
+
+    parts = []
+    for i in range(len(df)):
+        parts.append(
+            f"recipe: {names.iloc[i]}\n"
+            f"description: {desc.iloc[i]}\n"
+            f"tags: {tags.iloc[i]}\n"
+            f"ingredients: {ingredients.iloc[i]}\n"
+            f"steps: {steps.iloc[i]}\n"
+        )
+
+    return [p.lower() for p in parts]
+
+
+
+
+#------- Load a small corpus of text data -------
+def load_cooking_conversions(txt_path, max_rows=None):
+    docs = []
+    with open(txt_path, "r", encoding="utf-8") as f:
+        for i, line in enumerate(f):
+            if max_rows is not None and i >= max_rows:
+                break
+
+            line = line.strip()
+            if line:
+                docs.append(f"conversion: {line}\n")
+
+    return [d.lower() for d in docs]
+
+
+# ------- M3.F1 - 2. Experiment with different architecture structures (at least 3 different architectures) -------
+ARCHITECTURES = {
+    "Arch1_64": {"embed_dim":32, "lstm_units": [64]},
+    "Arch2_128": {"embed_dim":64, "lstm_units": [128]},
+    "Arch3_128x2": {"embed_dim":64, "lstm_units": [128, 128]},
+}
+
+# ------- M3.F1 - 3. Experiment with different epoch values -------
+EPOCHS_LIST = [3, 10, 20]
+
+
+# ------- M3.F1 - 5. Experiment with documents of varying sizes -------
+
+# ------- LOCAL -------
+DATASETS = [
+    ("recipes_csv", "project_data/original_files/recipes.csv", load_recipes_csv),
+    ("food_recipes_parquet", "project_data/original_files/food_recipes.parquet", load_food_parquet),
+    ("cooking_conversions", "project_data/original_files/cooking_conversions.txt", load_cooking_conversions),
+]
+
+# ------- GOOGLE COLAB -------
+# DATASETS = [
+#     ("recipes_csv", "/content/drive/MyDrive/Colab_Notebooks/data/recipes.csv", load_recipes_csv),
+#     ("food_recipes_parquet", "/content/drive/MyDrive/Colab_Notebooks/data/food_recipes.parquet", load_food_parquet),
+#     ("cooking_conversions", "/content/drive/MyDrive/Colab_Notebooks/data/cooking_conversions.txt", load_cooking_conversions),
+# ]
+
+CORPUS_SIZES = [200, 2000]
+
+SEQUENCE_LENGTH = 40
+BATCH_SIZE = 128
+
+
+def build_vocab_from_docs(docs, max_chars=None):
+    text = "".join(docs)
+    if max_chars is not None:
+        text = text[:max_chars]
+    chars = sorted(set(text))
+    char_to_idx = {c: i for i, c in enumerate(chars)}
+    idx_to_char = {i: c for c, i in char_to_idx.items()}
+    return text, chars, char_to_idx, idx_to_char
+
+
+
+
+def make_char_sequences(text, seq_len, char_to_idx):
+    X = []
+    y = []
+    for i in range(len(text) - seq_len):
+        seq = text[i:i + seq_len]
+        nxt = text[i + seq_len]
+        X.append([char_to_idx[c] for c in seq])
+        y.append(char_to_idx[nxt])
+
+    X = np.array(X, dtype=np.int32)
+    y = to_categorical(y, num_classes=len(char_to_idx))
+    return X, y
+
+
+
+
+# REFERENCES:
+# https://www.tensorflow.org/api_docs/python/tf/keras/layers/Embedding
+# https://www.tensorflow.org/text/tutorials/text_classification_rnn
+def train_model(text, chars, char_to_idx, seq_len, epochs, lstm_units_list, embed_dim):
+    X, y = make_char_sequences(text, seq_len, char_to_idx)
+    vocab_size = len(chars)
+
+    model = Sequential()
+
+    model.add(Embedding(input_dim=vocab_size, output_dim = embed_dim, input_length = seq_len))
+
+    for layer_i, units in enumerate(lstm_units_list):
+        last_layer = (layer_i == len(lstm_units_list) - 1)
+        model.add(
+            LSTM(units, return_sequences=not last_layer)
+        )
+
+    model.add(Dense(len(chars), activation='softmax'))
+
+    model.compile(optimizer='adam', loss='categorical_crossentropy')
+    t0 = time.time()
+    model.fit(X, y, epochs=epochs, batch_size=BATCH_SIZE, verbose=1)
+    train_seconds = time.time() - t0
+
+    return model, train_seconds
+
+
+
+
+# ------- M3.F1 - 4. Generate a new text that mimics the style of your chatbot document -------
+def generate_text(model, start_string, num_generate, seq_len, char_to_idx, idx_to_char):
+    start_string = "".join([c for c in start_string if c in char_to_idx])
+    if len(start_string) < 1:
+        return ""
+    if len(start_string) < seq_len:
+        start_string = (" " * (seq_len - len(start_string))) + start_string
+    else:
+        start_string = start_string[-seq_len:]
+
+    input_eval = np.array([char_to_idx[c] for c in start_string], dtype=np.int32).reshape((1, seq_len))
+
+    text_generated = []
+    for i in range(num_generate):
+        predictions = model.predict(input_eval, verbose=0)
+        predicted_id = int(np.argmax(predictions[0]))
+
+        text_generated.append(idx_to_char[predicted_id])
+        input_eval = np.concatenate([input_eval[:, 1:], np.array([[predicted_id]], dtype=np.int32)], axis=1)
+
+    return start_string + ''.join(text_generated)
+
+
+
+# ------- M4.G1 - POS Tagging -------
+def pos_tagging(docs):
+    all_results = []
+
+    for i, document in enumerate(docs):
+        tokens = word_tokenize(document)
+        tagged_tokens = pos_tag(tokens)
+
+        all_results.append((i, tagged_tokens))
+
+    return all_results
+
+# ------- M4.G1 - NER -------
+def named_entity_recognition(docs, nlp):
+    all_results_ner = []
+    for i, document in enumerate(docs):
+        doc = nlp(document)
+        entities = []
+        for ent in doc.ents:
+            entities.append((ent.text, ent.label_))
+
+        all_results_ner.append((i, entities))
+
+    return all_results_ner
+
+# ------- M4.G1 - Dependency Parsing -------
+def dependency_parsing(docs, nlp):
+    all_results_dep_parsing = []
+    for i, document in enumerate(docs):
+        doc = nlp(document)
+
+        dependencies = []
+        for token in doc:
+            dependencies.append((token.text, token.dep_, token.head.text))
+
+        all_results_dep_parsing.append((i, dependencies))
+
+    return all_results_dep_parsing
+
+
+# REFERENCE:
+# https://www.nltk.org/book/ch03.html
+def extract_sentence(document, nlp):
+    match = re.search(r"(instructions|steps|directions):\s*(.*)", document, re.IGNORECASE)
+    if match:
+        text = match.group(2)
+    else:
+        text = document
+    doc = nlp(text)
+    for sent in doc.sents:
+        sentence = sent.text.strip()
+        if len(sentence) > 20 and any(c.isalpha() for c in sentence):
+            return sentence
+
+    return document[:200]
+
+
+
+# ------- M3.F1 Chatbot Lab: Train a LSTM-Based Model - main() -------
+def main_part_1():
+    for dataset_name, path, loader in DATASETS:
+        for max_rows in CORPUS_SIZES:
+            docs = loader(path, max_rows=max_rows)
+            text, chars, char_to_idx, idx_to_char = build_vocab_from_docs(docs, max_chars=50_000)
+
+            if dataset_name == "cooking_conversions":
+                start_string = "conversion: 1 cup equals"
+            else:
+                start_string = "preheat oven to"
+
+
+            print("dataset: ", dataset_name, flush=True)
+            print("max_rows: ", max_rows, flush=True)
+            print("length of docs: ", len(docs), flush=True)
+            print("preview:\n", "\n".join(docs[:3])[:800], "\n", flush=True)
+            print("---------------\n")
+
+            for architecture, cfg in ARCHITECTURES.items():
+                for epochs in EPOCHS_LIST:
+                    print("architecture: ", architecture, flush=True)
+                    print("epochs: ", epochs, flush=True)
+                    model, train_seconds = train_model(
+                        text = text,
+                        chars = chars,
+                        char_to_idx = char_to_idx,
+                        seq_len = SEQUENCE_LENGTH,
+                        epochs = epochs,
+                        lstm_units_list = cfg["lstm_units"],
+                        embed_dim = cfg["embed_dim"],
+                    )
+                    sample = generate_text(
+                        model = model,
+                        start_string = start_string,
+                        num_generate = 400,
+                        seq_len = SEQUENCE_LENGTH,
+                        char_to_idx = char_to_idx,
+                        idx_to_char = idx_to_char
+                    )
+                    wrapped_sample = textwrap.fill(sample, width=80)
+                    print("Sample: \n", wrapped_sample, "\n", flush=True)
+
+# ------- M4.G1 Chatbot Lab: Syntax and Parsing - main() -------
+def main_part_2():
+    nlp = spacy.load("en_core_web_sm")
+    DOCS_PER_DATASET = 200
+    PRINT_DOC_INDEX = 0
+    PRINT_TOKENS_POS = 80
+    PRINT_ENTS_NER = 50
+    PRINT_TOKENS_DEP = 50
+
+
+    for dataset_name, path, loader in DATASETS:
+        # --------------------------------------
+        # POS
+        # --------------------------------------
+        print("\n")
+        print("-" * 80, flush=True)
+        print(" ------- POS TAGGING -----", flush=True)
+        print("-" * 80, flush=True)
+        print("\n")
+        print("Dataset: ", dataset_name, flush=True)
+        docs = loader(path, max_rows=DOCS_PER_DATASET)
+
+        sample_sentence = extract_sentence(docs[PRINT_DOC_INDEX], nlp)
+        print("Sample POS input sentence: ", sample_sentence, flush=True)
+        print("\n")
+        tokens = word_tokenize(sample_sentence)
+        tagged_tokens = pos_tag(tokens)
+        print("Sample POS output sentence: ", tagged_tokens, flush=True)
+        for word, tag in tagged_tokens:
+            print(f"{word:25} {tag}")
+        pos_results = pos_tagging(docs)
+        example_index = min(PRINT_DOC_INDEX, len(pos_results) - 1)
+        doc_i, tagged_tokens = pos_results[example_index]
+
+        sample_input = docs[doc_i][:400]
+        print(f"Example POS input for " + dataset_name + ": \n", flush=True)
+        example_input = textwrap.fill(sample_input, width=80)
+        print(example_input, " ...", flush=True)
+
+        print("\n")
+        print(f"Example POS output for " + dataset_name + ": \n", flush=True)
+        for word, tag in tagged_tokens[:PRINT_TOKENS_POS]:
+            print(f"{word:25} {tag}")
+
+        # --------------------------------------
+        # NER
+        # --------------------------------------
+        print("\n")
+        print("-" * 80, flush=True)
+        print(" ------- NER -----", flush=True)
+        print("-" * 80, flush=True)
+        ner_results = named_entity_recognition(docs, nlp)
+        example_index = min(PRINT_DOC_INDEX, len(ner_results) - 1)
+        doc_i, entities = ner_results[example_index]
+
+        doc = nlp(sample_sentence)
+        print("Sample NER input sentence: ", sample_sentence, flush=True)
+        print("\n")
+        print("Sample NER output sentence: ", flush=True)
+        if doc.ents:
+            for ent in doc.ents:
+                print(f"{ent.text:25} {ent.label_:25}", flush=True)
+        else:
+            print("No entities found")
+        print("\n")
+
+        print(f"Example NER output for {dataset_name}\n", flush=True)
+        if entities:
+            for text, label in entities[:PRINT_ENTS_NER]:
+                print(f"{text:25} {label}")
+        else:
+            print("No entities found")
+
+        # --------------------------------------
+        # DEPENDENCY PARSING
+        # --------------------------------------
+        print("\n")
+        print("-" * 80, flush=True)
+        print(" ------- Dependency Parsing -----", flush=True)
+        print("-" * 80, flush=True)
+
+        print("Sample Dependency Parsing input sentence: ", sample_sentence, flush=True)
+        print("\n")
+        print("Sample Dependency Parsing output sentence: ", flush=True)
+        for token in doc:
+            print(f"{token.text:25} {token.dep_:25} head={token.head.text}", flush=True)
+        dep_results = dependency_parsing(docs, nlp)
+        doc_i, deps = dep_results[example_index]
+        print(f"Example dependency output for {dataset_name}\n", flush=True)
+        for token, dep, head in deps[:PRINT_TOKENS_DEP]:
+            print(f"{token:25} {dep:25} {head}", flush=True)
+
+
+if __name__ == "__main__":
+    RUN_PART = 2
+
+    if RUN_PART == 1:
+        main_part_1()
+    elif RUN_PART == 2:
+        main_part_2()
