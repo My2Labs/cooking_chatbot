@@ -1,7 +1,17 @@
 import csv
 import pandas as pd
+from sklearn.decomposition import TruncatedSVD, NMF
 
-from textblob import TextBlob
+from sklearn.feature_extraction.text import TfidfVectorizer
+import gensim
+from gensim import corpora
+from gensim.models import LdaModel, HdpModel
+from gensim.parsing.preprocessing import STOPWORDS
+from pprint import pprint
+
+import numpy as np
+from sklearn.metrics import mean_squared_error
+from sklearn.decomposition import NMF
 
 
 
@@ -113,13 +123,81 @@ MAX_VOCAB = 5000
 BATCH_SIZE = 128
 
 
+def run_lsa(docs, num_topics=5, num_words=10):
+    documents = docs
+    vectorizer = TfidfVectorizer(stop_words="english", max_features=MAX_VOCAB)
+    X = vectorizer.fit_transform(documents)
+    lsa = TruncatedSVD(n_components=num_topics, random_state=42)
+    lsa.fit(X)
+    terms = vectorizer.get_feature_names_out()
+    print("\n" + "-" * 40 + "LSA" + "-" * 40)
+    for i, comp in enumerate(lsa.components_):
+        terms_comp = zip(terms, comp)
+        sorted_terms = sorted(terms_comp, key=lambda x: x[1], reverse=True)[:num_words]
+        print("\n")
+        print(f"Topic {i}: ")
+        for term, weight in sorted_terms:
+            print(f"{term}: {weight:4f}")
+
+def run_lda(docs, num_topics=5, num_words=10):
+    texts = [doc.split() for doc in docs]
+    dictionary = corpora.Dictionary(texts)
+    corpus_bow = [dictionary.doc2bow(text) for text in texts]
+    lda_model = LdaModel(corpus=corpus_bow, id2word=dictionary, num_topics=num_topics, random_state=42, passes=10)
+    print("\n" + "-" * 40 + "LDA" + "-" * 40)
+    print(f"LDA Top {num_topics} topics:")
+    for idx, topic in lda_model.print_topics(num_topics=num_topics, num_words=num_words):
+        print("\n")
+        print(f"Topic {idx}: ")
+        print(f"{topic}")
+
+def run_hdp(docs, num_topics=5, num_words=10):
+    texts = [doc.split(', ') for doc in docs]
+    dictionary = corpora.Dictionary(texts)
+    corpus_bow = [dictionary.doc2bow(text) for text in texts]
+    hdp_model = HdpModel(corpus_bow, id2word=dictionary)
+    print("\n" + "-" * 40 + "HDP" + "-" * 40)
+    print(f"HDP Top {num_topics} topics:")
+    for idx, topic in hdp_model.print_topics(num_topics=num_topics, num_words=num_words):
+        print("\n")
+        print(f"Topic {idx}: ")
+        print(f"{topic}")
+
+def run_nmf(docs, num_topics=5, num_words=10):
+    vectorizer = TfidfVectorizer(stop_words="english", max_features=MAX_VOCAB)
+    X = vectorizer.fit_transform(docs)
+    df = pd.DataFrame(X.toarray(), columns=vectorizer.get_feature_names_out())
+    model = NMF(n_components=num_topics, init="random", random_state=0, max_iter=500)
+    model.fit(df)
+    H = pd.DataFrame(model.components_, columns=df.columns)
+    W = pd.DataFrame(model.transform(df))
+    V = pd.DataFrame(np.dot(W, H), columns=df.columns)
+    V.index = df.index
+
+
+    print("\n" + "-" * 40 + "NMF" + "-" * 40)
+    for topic_idx in range(H.shape[0]):
+        topic = H.iloc[topic_idx]
+        top_words = topic.sort_values(ascending=False).head(num_words)
+        print("\n")
+        print(f"Topic {topic_idx}: ")
+        for word, weight in top_words.items():
+            print(f"{word}: {weight:4f}")
+
 
 
 def main():
     for dataset_name, path, loader in DATASETS:
         for max_rows in CORPUS_SIZES:
+            print("\n" + "-" * 80)
+            print(f"Dataset: {dataset_name} | Rows: {max_rows}")
 
             docs = loader(path, max_rows=max_rows)
+            run_lsa(docs)
+            run_lda(docs)
+            run_hdp(docs)
+            run_nmf(docs)
+
 
 
 
