@@ -1,5 +1,5 @@
-# from google.colab import drive
-# drive.mount('/content/drive')
+from google.colab import drive
+drive.mount('/content/drive')
 
 import csv
 import numpy as np
@@ -19,7 +19,7 @@ from tensorflow.keras.layers import Embedding, LSTM, Dense
 
 
 # ---------- Load recipes.csv ----------
-def load_recipes_dataframe(csv_path, max_rows=2000):
+def load_recipes_dataframe(csv_path, max_rows=10000):
     rows = []
 
     with open(csv_path, "r", encoding="utf-8", newline="") as f:
@@ -67,7 +67,7 @@ def add_sentiment_labels(df):
         polarity = TextBlob(desc).sentiment.polarity
         polarities.append(polarity)
 
-        if polarity > 0:
+        if polarity > 0.05:
             labels_num.append(1)
             labels_text.append("positive")
         else:
@@ -96,7 +96,8 @@ def run_textblob(df, limit=10):
 def run_scikit_learn(df):
     print("\n===== LAB 11: Scikit-Learn LinearSVC =====")
 
-    corpus = df["description"].fillna("").astype(str).apply(lambda x: x[:200])
+    corpus = df["text"].fillna("").astype(str)
+    # corpus = df["description"].fillna("").astype(str).apply(lambda x: x[:200])
     labels = df["label"]
 
     X_train, X_test, y_train, y_test = train_test_split(
@@ -129,7 +130,7 @@ def run_keras(df):
     print("\n===== LAB 12: Keras =====")
 
     corpus = df["description"].fillna("").astype(str).tolist()
-    corpus = [text[:200] for text in corpus]   # only short segment
+    # corpus = [text[:2000] for text in corpus]   # only short segment
     labels = df["label"].astype(int).to_numpy()
 
     X_train, X_test, y_train, y_test = train_test_split(
@@ -140,12 +141,12 @@ def run_keras(df):
         stratify=labels
     )
 
-    max_vocab = 1000
-    max_len = 50
-    embed_dim = 16
-    lstm_units = 16
-    epochs = 2
-    batch_size = 16
+    max_vocab = 10000
+    max_len = 300
+    embed_dim = 64
+    lstm_units = 128
+    epochs = 5
+    batch_size = 64
 
     tokenizer = Tokenizer(num_words=max_vocab, oov_token="<OOV>")
     tokenizer.fit_on_texts(X_train)
@@ -178,10 +179,10 @@ def run_keras(df):
 
 
 def main():
-    csv_path = "project_data/original_files/recipes.csv"
-    #csv_path = "/content/drive/MyDrive/Colab_Notebooks/recipes.csv"
+    # csv_path = "project_data/original_files/recipes.csv"
+    csv_path = "/content/drive/MyDrive/Colab_Notebooks/recipes.csv"
 
-    df = load_recipes_dataframe(csv_path, max_rows=100)
+    df = load_recipes_dataframe(csv_path, max_rows=2000)
     df = add_sentiment_labels(df)
 
     print("Loaded rows:", len(df))
