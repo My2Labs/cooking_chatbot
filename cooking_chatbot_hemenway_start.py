@@ -1,7 +1,10 @@
+# from google.colab import drive
+# drive.mount('/content/drive')
+
+
 import csv
 import pandas as pd
 
-from textblob import TextBlob
 
 
 
@@ -87,21 +90,26 @@ def load_cooking_conversions(txt_path, max_rows=None):
 
 
 
+# ------- LOCAL -------
+# DATASETS = [
+#     ("recipes_csv", "project_data/original_files/recipes.csv", load_recipes_csv),
+#     ("food_recipes_parquet", "project_data/original_files/food_recipes.parquet", load_food_parquet),
+#     ("cooking_conversions", "project_data/original_files/cooking_conversions.txt", load_cooking_conversions),
+# ]
 
-
-# ------- 5. Experiment with documents of varying sizes -------
+# ------- GOOGLE COLAB -------
 DATASETS = [
-    ("recipes_csv", "project_data/original_files/recipes.csv", load_recipes_csv),
-    ("food_recipes_parquet", "project_data/original_files/food_recipes.parquet", load_food_parquet),
-    ("cooking_conversions", "project_data/original_files/cooking_conversions.txt", load_cooking_conversions),
+    ("recipes_csv", "/content/drive/MyDrive/Colab_Notebooks/data/recipes.csv", load_recipes_csv),
+    ("food_recipes_parquet", "/content/drive/MyDrive/Colab_Notebooks/data/food_recipes.parquet", load_food_parquet),
+    ("cooking_conversions", "/content/drive/MyDrive/Colab_Notebooks/data/cooking_conversions.txt", load_cooking_conversions),
 ]
 
 CORPUS_SIZES = [200, 2000]
 
-# ------- 3. Experiment with different epoch values -------
+
 EPOCHS_LIST = [3, 10, 20]
 
-# ------- 2. Experiment with different architecture structures (at least 3 different architectures) -------
+
 ARCHITECTURES = {
     "Arch1_64": {"embed_dim":32, "lstm_units": [64]},
     "Arch2_128": {"embed_dim":64, "lstm_units": [128]},
